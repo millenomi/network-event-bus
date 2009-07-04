@@ -1,0 +1,131 @@
+# NETWORK EVENT BUS
+
+This is a short, informal specification for a way to efficiently move "events" (that is, notifications of interesting phenomena having been observed) from a single host to all of its peers on the local link.
+
+We define the terms as follows:
+
+ - **Events** are notifications of interesting stuff. What 'stuff' is 'interesting' is, of course, application-defined. An event is represented by an HTTP URL whose hostname and port belong to the server on the local network that originates the event. The process that causes an event to become known over the event bus is indicated as **publishing**.
+
+ - The **event bus** is the entirety of behaviors regulated by this specification.
+
+ - The **event source** is software that causes the host to exhibit the behavior indicated in this specification in relation to publishing events, or, when no ambiguity would occur, the host running the software. An **event receiver** is similarly defined as the software that causes an host to be aware of an event published by an event source, or the host on which it runs.
+
+ - **DNS-SD** is the DNS service discovery specification of [RFCxxxx]. We will refer to the portion of network where DNS-SD can notify clients of changes to service publishing as the **extent of the event bus**, which usually, but not necessarily, coincides with a local networking link.
+
+ - **HTTP** is the well-known protocol described, among others, by [RFCxxxx].
+
+## Discovery
+
+This part of the specification indicates how event receivers and event sources can find one another over the local link and how to handle failures at this stage of communication.
+
+An event source must do two things: provide an HTTP server; and provide a DNS-SD service that advertises that HTTP server over the network. We'll begin by noting the format required by the latter; it should be published with the following settings:
+
+* Name: as desired by the implementation.
+* Service: Either `_x-infinitelabs-events._tcp` or `_http._tcp` (see 1).
+* Host: The address or set of addresses through which the HTTP server is reachable (see 2).
+* Port: The port through which the HTTP server is reachable (see 2).
+* TXT data: A key-value encoding (as supported by Apple's DNS-SD implementation) of the following values:
+	- key `path`, paired to an appropriate HTTP path for use with the vended server. (See 2) This key is optional; if absent, the service must be treated as though the value of this key were `'/'`.
+	- key `x-infinitelabs-events-id`, paired to a event source state string. (See 3)
+	
+These values are subject to the following notes:
+
+1. The event source can use either service type. The `x-infinitelabs-events` indicates that the HTTP server required by this specification is intended, at least for what concerns the path being published, only to be used as a programmatic source of events and provides no facilities for browsing by user agets that expect them (such as an HTML representation of itself or of the events). Conversely, `http` indicates that the service is intended for browsers and other user agents, alongside implementing this specification.
+
+	Event receivers should, therefore, browse for services of both types. All services of the first type are relevant to event clients, while services of the second type require examination of their TXT record before consideration.
+
+2. The implementation requires an HTTP server to be provided. Additionally, for flexibility, the services that an event source must provide can be provided at any path within that server. These records must match with the address of that HTTP server. Note that the host vending the service is not necessarily the same host as the HTTP server, but this case should be atypical and this specification provides no way to distinguish this from a one-host scenario.
+
+3. This is an arbitrary string, such that two different states of the event source yield two different strings. See below.
+
+Browsing services with the above characteristics will provide a receiver with a list of potential event sources on the network. Event clients can also monitor changes to the DNS-SD services to be alerted of a change in state in the corresponding source, usually corresponding to new events becoming available on the source.
+
+## Event notification and retrieval
+
+To retrieve new events from an event source, a receiver must browse DNS-SD services that match the above. This yields a set of sources (each with a possible set of addresses, a port and an option), which can be queried through one or more HTTP GET requests for information regarding events.
+
+A receiver can monitor the state of the sources by monitoring for changes to the published DNS-SD services. A source that chooses to notify the bus of any number of changes changes the value paired to the `x-infinitelabs-events-id` key in the TXT record. Event receivers can use the notifications provided by DNS-SD to monitor for such changes.
+
+The resource at the path provided in the DNS-SD service can be retrieved through one such GET request for a list of all events the source can provide information on. This resource is known as the **base events resource** (and any appropriate URL to that resource as the **base URL** for the event source).
+
+The event source can use any pre-agreed format to communicate the list of events. This specification provides a number of formats for exchanging this informations that implementations should provide.
+
+Alongside the base events resource, the HTTP server should provide event lists in similar formats from resources reachable at related paths, as in the table below:
+
+	This URL…
+	(example)
+	… provides a list of…
+	----------
+	<base URL>
+	http://x/
+	… all events the source knows.
+	
+	<base URL> + /since/<id>
+	http://x/since/123
+	… all events that the source knows were observed after the event identified by the string <id>.
+	
+	<base URL> + /since-date/<date>
+	http://x/since-date/2009-07-04T16:29:52+02:00
+	… all events that the source knows were produced after the specified <date> (specified as per ISO 8601).
+	
+GET requests for resources other than the base one should retrieve lists of corresponding events that are sublists of the one returned by the base resource. They should be supported if and only if the event source is able to associate the data needed to produce the lists (for example, the `/since` family of URLs should be supported only if the source associates identifiers to at least some events, and only if it's able to produce an ordering among events).
+
+Whatever format is used for the events list, it should be correctly identified using a MIME type string. This string must be provided in the `Content-Type` HTTP header. The client may optionally indicate to the server that it's willing to process a number of different formats for this list using the `Accept` HTTP header, as specified by the protocol.
+
+### The Events XML format
+
+The Events XML format specifies a way to produce a list of events. The following is an example of a XML document in this format:
+
+	<?xml version="1.0" encoding="utf-8"?>
+	<events xmlns="http://infinite-labs.net/ns/events-xml/1.0">
+		<event
+			kind="com.transmissionbt.Torrent.Progress"
+			id="123"
+			href="/com.transmissionbt/torrent/4567"
+			timestamp="2009-07-04T16:49:10+02:00"
+			/>
+		<event
+			kind="net.infinite-labs.builds.BuildPerformed"
+			id="124"
+			href="/net.infinite-labs.builds/mover"
+			timestamp="2009-07-04T16:49:10+02:00"
+			/>
+		<event
+			kind="net.infinite-labs.ImportantMail"
+			id="126"
+			href="https://mail.google.com/mail/#inbox/12246212f620b2b2"
+			timestamp="2009-07-04T16:49:10+02:00"
+			/>
+	</events>
+	
+The MIME type for this format is `application/x-infinitelabs-events+xml`.
+
+All tags for this format are defined in the `http://infinite-labs.net/ns/events-xml/1.0`. This format allows for extension, so long that all additional attributes and tags are from other namespaces.
+
+#### `<events>`
+	
+The root tag of the events list. It can have any number of `<event>` descendants. It has no attributes.
+	
+Note that the order of this tag's `<event>` descendants is significant. The implementation should strive to order them so that if two events happened one after the other and timestamps aren't available for the two events, the corresponding `<event>` tags are also ordered one after the other.
+	
+#### `<event>`
+	
+This tag specifies a single event in the list. It may have the following attributes:
+
+##### `kind=...`
+
+The `kind` attribute is mandatory and specifies a "kind" of event. Applications specify the semantics for each kind of event; this can be an arbitrary string, but a reverse DNS-style string is preferred to aid in creating unique strings.
+
+##### `id=...`
+
+If the event source attached an identifier to this event, it should provide this identifier as part of the list. Otherwise, it should omit this attribute. Identifiers are arbitrary strings such that no two events have the same identifier.
+
+##### `href=...`
+
+An address to a resource that provides additional information on this event. This can be relative or absolute. Relative URLs are made absolute using the current document's URL as the base.
+
+The resource may or may not be machine-readable. The semantics associated to the event kind specify whether this is the case or not.
+
+##### `timestamp=...`
+
+If the event source attached timestamp information to events, it should provide this timestamp in this attribute. The value of this attribute, if present, is a ISO 8601-formatted date.
