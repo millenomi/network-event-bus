@@ -70,6 +70,8 @@ Alongside the base events resource, the HTTP server should provide event lists i
 	
 GET requests for resources other than the base one should retrieve lists of corresponding events that are sublists of the one returned by the base resource. They should be supported if and only if the event source is able to associate the data needed to produce the lists (for example, the `/since` family of URLs should be supported only if the source associates identifiers to at least some events, and only if it's able to produce an ordering among events).
 
+In case of an error, an appropriate HTTP error code should be provided. For example, if a certain list is unavailable, a `404 Not Found` error may be appropriate.
+
 Whatever format is used for the events list, it should be correctly identified using a MIME type string. This string must be provided in the `Content-Type` HTTP header. The client may optionally indicate to the server that it's willing to process a number of different formats for this list using the `Accept` HTTP header, as specified by the protocol.
 
 ### The Events XML format
